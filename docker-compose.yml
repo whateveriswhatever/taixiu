@@ -1,0 +1,161 @@
+services:
+  # Database cho Auth Service
+  auth-db:
+    image: postgres:16-alpine
+    container_name: taixiu-auth-db
+    restart: always
+    environment:
+      POSTGRES_USER: taixiu_admin
+      POSTGRES_PASSWORD: taixiu_secret_password
+      POSTGRES_DB: taixiu_auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taixiu_admin -d taixiu_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - taixiu-network
+
+  # Database cho Wallet Service
+  wallet-db:
+    image: postgres:16-alpine
+    container_name: taixiu-wallet-db
+    restart: always
+    environment:
+      POSTGRES_USER: taixiu_admin
+      POSTGRES_PASSWORD: taixiu_secret_password
+      POSTGRES_DB: taixiu_wallet
+    ports:
+      - "5433:5432"
+    volumes:
+      - wallet_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taixiu_admin -d taixiu_wallet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - taixiu-network
+
+  # Database cho Game Service
+  game-db:
+    image: postgres:16-alpine
+    container_name: taixiu-game-db
+    restart: always
+    environment:
+      POSTGRES_USER: taixiu_admin
+      POSTGRES_PASSWORD: taixiu_secret_password
+      POSTGRES_DB: taixiu_game
+    ports:
+      - "5434:5432"
+    volumes:
+      - game_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taixiu_admin -d taixiu_game"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - taixiu-network
+
+  # Redis dùng chung cho Pub/Sub Realtime, Cache & Rate Limiting
+  redis:
+    image: redis:7-alpine
+    container_name: taixiu-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - taixiu-network
+
+  # Auth Microservice (Port 8001)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: taixiu-auth-service
+    restart: always
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    environment:
+      - PROJECT_NAME=Tài Xỉu Auth Service
+      - API_V1_STR=/api/v1
+      - SECRET_KEY=taixiu_super_secure_jwt_secret_key_change_me_in_prod_2026
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - DATABASE_URL=postgresql+asyncpg://taixiu_admin:taixiu_secret_password@auth-db:5432/taixiu_auth
+    ports:
+      - "8001:8001"
+    networks:
+      - taixiu-network
+
+  # Wallet Microservice (Port 8002)
+  wallet-service:
+    build:
+      context: ./services/wallet-service
+      dockerfile: Dockerfile
+    container_name: taixiu-wallet-service
+    restart: always
+    depends_on:
+      wallet-db:
+        condition: service_healthy
+    environment:
+      - PROJECT_NAME=Tài Xỉu Wallet Service
+      - API_V1_STR=/api/v1
+      - SECRET_KEY=taixiu_super_secure_jwt_secret_key_change_me_in_prod_2026
+      - ALGORITHM=HS256
+      - INTERNAL_API_KEY=internal_service_secret_taixiu_game_engine_key_2026
+      - INITIAL_WELCOME_BONUS=100000.0
+      - DATABASE_URL=postgresql+asyncpg://taixiu_admin:taixiu_secret_password@wallet-db:5432/taixiu_wallet
+    ports:
+      - "8002:8002"
+    networks:
+      - taixiu-network
+
+  # Game Engine Microservice (Port 8003)
+  game-service:
+    build:
+      context: ./services/game-service
+      dockerfile: Dockerfile
+    container_name: taixiu-game-service
+    restart: always
+    depends_on:
+      game-db:
+        condition: service_healthy
+      wallet-service:
+        condition: service_started
+    environment:
+      - PROJECT_NAME=Tài Xỉu Game Engine Service
+      - API_V1_STR=/api/v1
+      - SECRET_KEY=taixiu_super_secure_jwt_secret_key_change_me_in_prod_2026
+      - ALGORITHM=HS256
+      - WALLET_SERVICE_URL=http://wallet-service:8002/api/v1/wallet
+      - INTERNAL_API_KEY=internal_service_secret_taixiu_game_engine_key_2026
+      - BETTING_DURATION_SECONDS=35
+      - SHAKING_DURATION_SECONDS=10
+      - SETTLING_DURATION_SECONDS=5
+      - MIN_BET_AMOUNT=1000.0
+      - MAX_BET_AMOUNT=50000000.0
+      - DATABASE_URL=postgresql+asyncpg://taixiu_admin:taixiu_secret_password@game-db:5432/taixiu_game
+    ports:
+      - "8003:8003"
+    networks:
+      - taixiu-network
+
+volumes:
+  auth_db_data:
+  wallet_db_data:
+  game_db_data:
+  redis_data:
+
+networks:
+  taixiu-network:
+    driver: bridge
